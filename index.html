@@ -358,7 +358,7 @@ const parse=s=>{const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d)}
 const TODAY_ISO=iso(TODAY);
 const MES=["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 const MES_C=["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
-const fmtD=s=>{const d=parse(s);return `${d.getDate()} ${MES_C[d.getMonth()]} ${d.getFullYear()}`};
+const fmtD=s=>{if(!s)return"—";const d=parse(s);return `${d.getDate()} ${MES_C[d.getMonth()]} ${d.getFullYear()}`};
 const pct=v=>v==null?"—":(v*100).toLocaleString("es-CO",{maximumFractionDigits:1,minimumFractionDigits:1})+"%";
 const cop=v=>"$"+Math.round(v).toLocaleString("es-CO");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -749,7 +749,7 @@ function renderApp(){
   renderView();
 }
 function renderView(){
-  const M=document.getElementById("main");if(!M)return;if(!STORES.includes(S.nomStore))S.nomStore=STORES[0];
+  const M=document.getElementById("main");if(!M)return;if(!STORES.includes(S.nomStore))S.nomStore=STORES[0];fixPurch();
   const v={cal:viewCal,dash:viewDash,tasks:viewTasks,crm:viewCRM,nov:viewNov,tpl:viewTpl,team:viewTeam,equipo:viewEquipo,nomina:viewNomina,param:viewParams,purch:viewPurch,pnotes:viewPNotes,prod:viewProd,matriz:viewMatriz,run:viewRun,conteos:viewCountMonth,countday:viewCountDay}[S.view];
   M.innerHTML=`<div class="page">${v()}</div>`;M.scrollTop=0;
   bindChart();
@@ -1774,7 +1774,13 @@ const orTop=a=>a.length?a:activeTeam().filter(u=>u.role==="gerencia");
 const confirmers=()=>orTop(activeTeam().filter(u=>isAdminOf(u,"com")));
 const buyers=()=>orTop((x=>x.length?x:activeTeam().filter(u=>isAdminOf(u,"cmp")))(activeTeam().filter(u=>u.role==="user"&&u.mods.includes("cmp"))));
 const authorizers=p=>overLimit(p)?activeTeam().filter(u=>u.role==="gerencia"):orTop(activeTeam().filter(u=>isAdminOf(u,"cmp")));
-const pLog=(p,text,red)=>p.history.push({at:TODAY_ISO,ts:new Date().toISOString(),by:S.user.id,text,red:!!red});
+const pLog=(p,text,red)=>(p.history=p.history||[]).push({at:TODAY_ISO,ts:new Date().toISOString(),by:S.user.id,text,red:!!red});
+/* requests made with version 1 lack fields of the new flow (and the very first one got no number): complete them so they can be opened and moved */
+function fixPurch(){
+  PURCH.filter(p=>p.num==null||!(p.num>0)).sort((a,b)=>(a.date||"")<(b.date||"")?-1:1).forEach(p=>{p.num=nextNum(PURCH.filter(x=>x.num>0));(p.history=p.history||[]).push({at:TODAY_ISO,by:S.user.id,text:`Se asignó el número #${p.num} (solicitud creada antes de la versión 2)`})});
+  PURCH.forEach(p=>{if(!Array.isArray(p.tasks))p.tasks=p.task?[p.task]:[];if(!p.moved)p.moved=p.date||TODAY_ISO;if(!Array.isArray(p.history))p.history=[];if(!Array.isArray(p.items))p.items=[];if(p.needBy==null)p.needBy="";if(p.value==null)p.value=0;["po","buyDate","eta","invBuy","arrived","clientOC"].forEach(k=>{if(p[k]==null)p[k]=""})});
+  PORDERS.forEach(o=>{if(!Array.isArray(o.tasks))o.tasks=[];if(!Array.isArray(o.history))o.history=[];if(!Array.isArray(o.items))o.items=[]});
+}
 /* time allowed in each state (Parametrización); Solicitado is due on the estimated arrival date */
 function pDue(p){if(P_DONE.includes(p.status))return null;if(p.status==="Solicitado")return p.eta||null;return addDays(p.moved||p.date,PARAMS.purch.stageDays[p.status]??1)}
 const pLate=p=>{const d=pDue(p);return!!d&&TODAY_ISO>d};
@@ -1851,13 +1857,14 @@ function pStep(p){
     :box(who(`Pedida con la OC ${esc(p.po)}. Llegada estimada: ${fmtD(p.eta)}.`));
   return "";
 }
-function openPurch(id){const p=PURCH.find(x=>x.id===id);if(!p)return closeSheet();const late=pLate(p),due=pDue(p),ot=onTime(p),recv=p.status==="Completado"&&p.recv;
+function openPurch(id){fixPurch();const p=PURCH.find(x=>x.id===id);if(!p)return closeSheet();const late=pLate(p),due=pDue(p),ot=onTime(p),recv=p.status==="Completado"&&p.recv;
   const f=(l,v)=>`<div><div class="eyebrow">${l}</div><div class="num">${v||"—"}</div></div>`;
   sheet(`<div class="sheet-h"><div><div class="eyebrow">Solicitud de compra #${p.num} · ${P_TYPES[p.type]} (${p.type})</div><h2>${esc(p.client)}</h2>
      <div class="muted" style="font-size:13px">${esc(p.branch)} · Quien lo solicita: ${esc(userById(p.seller).name)}${p.clientOC?" · OC cliente "+esc(p.clientOC):""}</div>
      <div class="muted" style="font-size:13px">Creada el ${fmtTS(p.createdAt,p.date)} · Se necesita el <strong>${fmtD(p.needBy)}</strong></div></div><button class="icon-btn" data-act="close" aria-label="Cerrar">✕</button></div>
    <div class="row" style="gap:8px"><span class="pill ${pTone[p.status]}">${p.status}</span>${late?`<span class="flag warn">${FIRE} ${p.status==="Solicitado"?"No llegó en la fecha estimada":"Venció el tiempo de este estado"}</span>`:due?`<span class="muted" style="font-size:13px">${p.status==="Solicitado"?"Llegada estimada":"Tiempo hasta"}: ${fmtD(due)}</span>`:""}${ot!=null?`<span class="pill ${ot?"g":"r"}">${ot?"Llegó a tiempo":"Llegó tarde"}</span>`:""}</div>
    ${p.status==="Rechazada"?`<div class="lock" style="background:var(--r-bg)"><strong>Rechazada</strong> · ${esc(p.rejReason||"")}</div>`:""}
+   ${!p.needBy&&!P_DONE.includes(p.status)?`<div class="lock" style="background:var(--y-bg);font-size:13px">Esta solicitud no tiene la fecha en que se necesita.${canEditP(p)?` <button class="btn sm" data-act="p-edit" data-id="${p.id}">Agregar la fecha</button>`:""}</div>`:""}
    ${pStep(p)}
    <div class="scroll-x"><table><thead><tr><th>Código</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th>${recv?"<th>Llegó</th>":""}</tr></thead><tbody>${p.items.map((i,k)=>{const r=recv?p.recv[k]:null;return `<tr><td>${esc(i.code||"—")}</td><td>${esc(i.desc)}</td><td>${esc(i.unit)}</td><td class="num">${i.qty}</td>${recv?`<td class="num" ${r!==i.qty?'style="color:var(--r);font-weight:700"':""}>${r}</td>`:""}</tr>`}).join("")}</tbody></table></div>
    <div class="grid2" style="font-size:14px">${f("Valor compra",p.value?cop(p.value):"")}${f("Orden de compra",esc(p.po))}${f("Fecha de compra",p.buyDate&&fmtD(p.buyDate))}${f("Fecha estimada de llegada",p.eta&&fmtD(p.eta))}${f("Factura de compra",esc(p.invBuy))}${f("Fecha de llegada",p.arrived&&fmtD(p.arrived))}${p.invValue!=null&&p.invValue!==p.value?f("Valor facturado",`<span style="color:var(--r);font-weight:700">${cop(p.invValue)}</span>`):""}</div>
