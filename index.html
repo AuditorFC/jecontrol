@@ -282,6 +282,11 @@ select.shift{appearance:none;-webkit-appearance:none;text-align:center;text-alig
 .kanban.week-plan{grid-auto-columns:minmax(140px,1fr)}
 .nb{margin-left:auto;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--r);color:#fff;font-size:11px;font-weight:800;display:inline-grid;place-items:center;font-style:normal}
 .tabs-bottom .nb{margin-left:4px;height:16px;min-width:16px;font-size:10px;padding:0 4px}
+.deal.partial{background:#FFF0E0;border-color:#F08A2C}
+.flag.part{background:#F08A2C;color:#fff}
+.col.part-col{background:#FFF7EE}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .deal.partial{background:#3A2410;border-color:#B8661E}:root:not([data-theme="light"]) .col.part-col{background:#2A1D10}}
+:root[data-theme="dark"] .deal.partial{background:#3A2410;border-color:#B8661E}:root[data-theme="dark"] .col.part-col{background:#2A1D10}
 .lg-btn{border:0;background:transparent;display:inline-flex;align-items:center;gap:6px;font:inherit;color:inherit;cursor:pointer;padding:2px 6px;border-radius:6px}
 .lg-btn:hover{background:var(--surface-2)}
 .tchip[data-act]{cursor:pointer}
@@ -1854,13 +1859,18 @@ function viewParams(){
    Cotizado por autorizar (Administrador de Compras hasta el tope; por encima del tope y toda SA, Gerencia o Superusuario) →
    Autorizado (Compras genera la OC) → Solicitado (espera la llegada) → Completado (se valida lo que llegó).
    Rechazada: al confirmar o al autorizar, siempre con el motivo. Todo queda en la trazabilidad, visible para todos. */
-const P_COLS=["Por confirmar","Pendiente","Cotizado por autorizar","Autorizado","Solicitado","Completado","Rechazada"];
-const P_NEXT={"Por confirmar":"Pendiente",Pendiente:"Cotizado por autorizar","Cotizado por autorizar":"Autorizado",Autorizado:"Solicitado",Solicitado:"Completado"};
+const P_COLS=["Por confirmar","Pendiente","Cotizado por autorizar","Autorizado","Solicitado","Entrega parcial","Completado","Rechazada"];
+const P_NEXT={"Por confirmar":"Pendiente",Pendiente:"Cotizado por autorizar","Cotizado por autorizar":"Autorizado",Autorizado:"Solicitado",Solicitado:"Completado","Entrega parcial":"Completado"};
+const P_WAIT=["Solicitado","Entrega parcial"];
 const P_TYPES={CE:"Compra especial",SA:"Abastecimiento"};
 const P_DONE=["Completado","Rechazada"];
 const PR=(o)=>({id:nid("pr"),num:0,items:[],clientOC:"",accepted:true,status:"Por confirmar",value:0,po:"",buyDate:"",eta:"",invBuy:"",arrived:"",needBy:"",history:[],tasks:[],...o});
 const PURCH=[];
-const pTone={"Por confirmar":"y",Pendiente:"y","Cotizado por autorizar":"y",Autorizado:"b",Solicitado:"b",Completado:"g",Rechazada:"r"};
+const pTone={"Por confirmar":"y",Pendiente:"y","Cotizado por autorizar":"y",Autorizado:"b",Solicitado:"b","Entrega parcial":"o",Completado:"g",Rechazada:"r"};
+// quantities can be adjusted by whoever has the request's turn (and Gerencia / Superusuario) until the purchase order is placed
+const canQty=p=>isTop(S.user)||(p.status==="Por confirmar"&&canConfirm())||(["Pendiente","Autorizado"].includes(p.status)&&canBuy())||(p.status==="Cotizado por autorizar"&&canAuthorize(p));
+// what is still missing after partial deliveries
+const pMissing=p=>p.items.map((i,k)=>({i,f:(+i.qty||0)-(+(p.recv||[])[k]||0)})).filter(x=>x.f>0);
 const FIRE='<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M12 2c1 3.5-1.5 5-2.5 7.2C8.6 11 9.2 13 10.5 13.6 9.8 11.4 11 10 12.4 9c-.2 2.5 1.9 3.6 1.9 6.1A3.3 3.3 0 0 1 11 18.4c3.6 1.2 7-1.2 7-5.1 0-4.6-3.8-6.6-6-11.3zM6.3 11.6C5.4 13 5 14.4 5 15.6 5 19.1 8 22 12 22c-3-.9-4.6-3.6-3.7-6.8-1.4-.6-2.1-2-2-3.6z"/></svg>';
 const nextNum=a=>Math.max(0,...a.map(x=>x.num||0))+1;
 const fmtS=s=>s?fmtD(s).replace(" "+TODAY.getFullYear(),""):"—";
@@ -1886,7 +1896,7 @@ function fixPurch(){
   PORDERS.forEach(o=>{if(!Array.isArray(o.tasks))o.tasks=[];if(!Array.isArray(o.history))o.history=[];if(!Array.isArray(o.items))o.items=[]});
 }
 /* time allowed in each state (Parametrización); Solicitado is due on the estimated arrival date */
-function pDue(p){if(P_DONE.includes(p.status))return null;if(p.status==="Solicitado")return p.eta||null;return addDays(p.moved||p.date,PARAMS.purch.stageDays[p.status]??1)}
+function pDue(p){if(P_DONE.includes(p.status))return null;if(P_WAIT.includes(p.status))return p.eta||null;return addDays(p.moved||p.date,PARAMS.purch.stageDays[p.status]??1)}
 const pLate=p=>{const d=pDue(p);return!!d&&TODAY_ISO>d};
 const onTime=p=>p.arrived&&p.needBy?p.arrived<=p.needBy:null;
 const pAge=p=>daysBetween(p.date,p.doneAt||TODAY_ISO);
@@ -1898,19 +1908,21 @@ function pNotify(subject,who){if(typeof outlookNotice==="function")outlookNotice
 function purchActs(){return PURCH.filter(p=>(p.status==="Por confirmar"&&canConfirm())||(p.status==="Cotizado por autorizar"&&canAuthorize(p))||(!isTop(S.user)&&S.user.mods.includes("cmp")&&["Pendiente","Autorizado"].includes(p.status)))}
 const purchBadge=()=>purchActs().length;
 function purchCard(p){const late=pLate(p),due=pDue(p),ot=onTime(p);
-  return `<button class="deal pcard ${late?"late":""}" data-drag="po" data-act="open-purch" data-id="${p.id}">
+  const part=p.status==="Entrega parcial";
+  return `<button class="deal pcard ${late?"late":""} ${part?"partial":""}" data-drag="po" data-act="open-purch" data-id="${p.id}">
+   ${part?`<span class="flag part">Con entrega parcial</span>`:""}
    <span class="row" style="justify-content:space-between;gap:6px;flex-wrap:nowrap"><strong>#${p.num} · ${esc(p.client)}</strong><span class="pill ${p.type==="CE"?"o":"n"}">${p.type}</span></span>
-   ${late?`<span class="flag warn">${FIRE} ${p.status==="Solicitado"?"No ha llegado":"Venció el tiempo"}</span>`:""}
-   <span class="muted" style="font-size:12px">${esc(p.items.map(i=>`${i.qty} ${i.unit} ${i.desc}`).join(" · "))}</span>
+   ${late?`<span class="flag warn">${FIRE} ${part?"Falta mercancía":p.status==="Solicitado"?"No ha llegado":"Venció el tiempo"}</span>`:""}
+   <span class="muted" style="font-size:12px">${esc(p.items.slice(0,3).map((i,k)=>part?`${(p.recv||[])[k]||0} de ${i.qty} ${i.unit} ${i.desc}`:`${i.qty} ${i.unit} ${i.desc}`).join(" · "))}${p.items.length>3?` <strong>+${p.items.length-3} producto(s) más</strong>`:""}</span>
    <span class="muted" style="font-size:12px">${esc(p.branch||"Sucursal por definir")} · ${esc(userById(p.seller).name)}</span>
    ${p.value?`<span class="val">${cop(p.value)}</span>`:""}${p.po?`<span class="muted" style="font-size:12px">OC: <strong>${esc(p.po)}</strong></span>`:""}
-   <span class="row" style="justify-content:space-between;gap:6px"><span class="muted num" style="font-size:12px">Se necesita ${fmtS(p.needBy)}</span>${due?`<span class="pill ${late?"r":"n"}">${p.status==="Solicitado"?"Llega":"Vence"} ${fmtS(due)}</span>`:p.status==="Completado"&&ot!=null?`<span class="pill ${ot?"g":"r"}">${ot?"A tiempo":"Tarde"}</span>`:""}</span></button>`}
+   <span class="row" style="justify-content:space-between;gap:6px"><span class="muted num" style="font-size:12px">Se necesita ${fmtS(p.needBy)}</span>${due?`<span class="pill ${late?"r":"n"}">${P_WAIT.includes(p.status)?"Llega":"Vence"} ${fmtS(due)}</span>`:p.status==="Completado"&&ot!=null?`<span class="pill ${ot?"g":"r"}">${ot?"A tiempo":"Tarde"}</span>`:""}</span></button>`}
 /* the board works like the CRM pipeline: one column per state; Completado and Rechazadas show the chosen period */
 function pBoard(){
-  const cols=P_COLS.filter(s=>s!=="Por confirmar"||seesConfirm());
+  const cols=P_COLS;
   const col=s=>PURCH.filter(p=>p.status===s&&(!P_DONE.includes(s)||inPer(p.doneAt))).sort((a,b)=>a.num-b.num);
   return `<p class="example-note" style="margin:0">Arrastra una tarjeta a la siguiente columna o ábrela para gestionarla. En rojo con ${FIRE}, las que pasaron el tiempo de su estado (se ajusta en Parametrización).</p>
-  <div class="kanban pboard">${cols.map(s=>{const ds=col(s);return `<div class="col ${s==="Rechazada"?"rej-col":""}" data-pcol="${s}"><div class="col-h"><span>${s==="Rechazada"?"Rechazadas":s}</span><span class="muted">${ds.length}${P_DONE.includes(s)?" · en el periodo":""}</span></div>${ds.map(purchCard).join("")}</div>`}).join("")}</div>`;
+  <div class="kanban pboard">${cols.map(s=>{const ds=col(s);return `<div class="col ${s==="Rechazada"?"rej-col":s==="Entrega parcial"?"part-col":""}" data-pcol="${s}"><div class="col-h"><span>${s==="Rechazada"?"Rechazadas":s}</span><span class="muted">${ds.length}${P_DONE.includes(s)?" · en el periodo":""}</span></div>${ds.map(purchCard).join("")}</div>`}).join("")}</div>`;
 }
 function pList(){
   const q=(S.pq||"").toLowerCase();
@@ -1957,24 +1969,29 @@ function pStep(p){
   if(p.status==="Autorizado")return canBuy()?box(`<strong>Generar la orden de compra</strong><div class="grid2"><div class="field"><label for="p-po">Orden de compra *</label><input id="p-po" value="${esc(p.po)}" placeholder="Ej.: OC-FC-2240"></div>
      <div class="field"><label for="p-bd">Fecha de compra *</label><input id="p-bd" type="date" value="${p.buyDate||TODAY_ISO}"></div><div class="field"><label for="p-eta">Fecha estimada de llegada *</label><input id="p-eta" type="date" value="${p.eta||""}" min="${TODAY_ISO}"></div></div>
      <div class="row"><button class="btn primary" data-act="p-go" data-id="${p.id}" data-s="Solicitado">Pasar a Solicitado</button></div>`,"y-bg"):box(who("Autorizada. Compras está generando la orden de compra."));
-  if(p.status==="Solicitado")return canBuy()?box(`<strong>Esperando la mercancía</strong>${who(`Llegada estimada: ${fmtD(p.eta)}. Al recibirla valida productos, cantidades y valor contra la OC.`)}<div class="row"><button class="btn primary" data-act="p-go" data-id="${p.id}" data-s="Completado">Registrar llegada</button></div>`,"y-bg")
+  if(p.status==="Solicitado")return canBuy()?box(`<strong>Esperando la mercancía</strong>${who(`Llegada estimada: ${fmtD(p.eta)}. Al recibirla escribe lo que llegó de cada producto. Si llega solo una parte, queda en Entrega parcial.`)}<div class="row"><button class="btn primary" data-act="p-go" data-id="${p.id}" data-s="Completado">Registrar llegada</button></div>`,"y-bg")
     :box(who(`Pedida con la OC ${esc(p.po)}. Llegada estimada: ${fmtD(p.eta)}.`));
+  if(p.status==="Entrega parcial"){const m=pMissing(p).map(x=>`${x.f} ${x.i.unit} ${x.i.desc}`).join(", ");
+    return canBuy()?box(`<strong>Con entrega parcial</strong>${who(`Falta: ${esc(m)}. Llegada estimada: ${fmtD(p.eta)}.`)}<div class="row"><button class="btn primary" data-act="p-go" data-id="${p.id}" data-s="Completado">Registrar llegada de lo que falta</button><button class="btn" data-act="p-closeout" data-id="${p.id}">Cerrar con lo recibido</button></div>`,"y-bg")
+      :box(`<strong>Con entrega parcial</strong>${who(`Falta: ${esc(m)}.`)}`)}
   return "";
 }
-function openPurch(id){fixPurch();const p=PURCH.find(x=>x.id===id);if(!p)return closeSheet();const late=pLate(p),due=pDue(p),ot=onTime(p),recv=p.status==="Completado"&&p.recv;
+function openPurch(id){fixPurch();const p=PURCH.find(x=>x.id===id);if(!p)return closeSheet();const late=pLate(p),due=pDue(p),ot=onTime(p),recv=["Entrega parcial","Completado"].includes(p.status)&&p.recv,eq=canQty(p);
   const f=(l,v)=>`<div><div class="eyebrow">${l}</div><div class="num">${v||"—"}</div></div>`;
   sheet(`<div class="sheet-h"><div><div class="eyebrow">Solicitud de compra #${p.num} · ${P_TYPES[p.type]} (${p.type})</div><h2>${esc(p.client)}</h2>
      <div class="muted" style="font-size:13px">${esc(p.branch||"Sucursal por definir")} · Quien lo solicita: ${esc(userById(p.seller).name)}${p.clientOC?" · OC cliente "+esc(p.clientOC):""}</div>
      <div class="muted" style="font-size:13px">Creada el ${fmtTS(p.createdAt,p.date)} · Se necesita el <strong>${fmtD(p.needBy)}</strong></div></div><button class="icon-btn" data-act="close" aria-label="Cerrar">✕</button></div>
-   <div class="row" style="gap:8px"><span class="pill ${pTone[p.status]}">${p.status}</span>${late?`<span class="flag warn">${FIRE} ${p.status==="Solicitado"?"No llegó en la fecha estimada":"Venció el tiempo de este estado"}</span>`:due?`<span class="muted" style="font-size:13px">${p.status==="Solicitado"?"Llegada estimada":"Tiempo hasta"}: ${fmtD(due)}</span>`:""}${ot!=null?`<span class="pill ${ot?"g":"r"}">${ot?"Llegó a tiempo":"Llegó tarde"}</span>`:""}</div>
+   <div class="row" style="gap:8px"><span class="pill ${pTone[p.status]}">${p.status}</span>${p.status==="Entrega parcial"?`<span class="flag part">Con entrega parcial</span>`:""}${late?`<span class="flag warn">${FIRE} ${P_WAIT.includes(p.status)?"No llegó en la fecha estimada":"Venció el tiempo de este estado"}</span>`:due?`<span class="muted" style="font-size:13px">${P_WAIT.includes(p.status)?"Llegada estimada":"Tiempo hasta"}: ${fmtD(due)}</span>`:""}${ot!=null?`<span class="pill ${ot?"g":"r"}">${ot?"Llegó a tiempo":"Llegó tarde"}</span>`:""}</div>
    ${p.status==="Rechazada"?`<div class="lock" style="background:var(--r-bg)"><strong>Rechazada</strong> · ${esc(p.rejReason||"")}</div>`:""}
    ${!p.needBy&&!P_DONE.includes(p.status)?`<div class="lock" style="background:var(--y-bg);font-size:13px">Esta solicitud no tiene la fecha en que se necesita.${canEditP(p)?` <button class="btn sm" data-act="pr-edit" data-id="${p.id}">Agregar la fecha</button>`:""}</div>`:""}
    ${pStep(p)}
-   <div class="scroll-x"><table><thead><tr><th>Código</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th>${recv?"<th>Llegó</th>":""}</tr></thead><tbody>${p.items.map((i,k)=>{const r=recv?p.recv[k]:null;return `<tr><td>${esc(i.code||"—")}</td><td>${esc(i.desc)}</td><td>${esc(i.unit)}</td><td class="num">${i.qty}</td>${recv?`<td class="num" ${r!==i.qty?'style="color:var(--r);font-weight:700"':""}>${r}</td>`:""}</tr>`}).join("")}</tbody></table></div>
+   <div class="scroll-x"><table><thead><tr><th>Código</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th>${recv?"<th>Llegó</th>":""}</tr></thead><tbody>${p.items.map((i,k)=>{const r=recv?(+p.recv[k]||0):null;return `<tr><td>${esc(i.code||"—")}</td><td>${esc(i.desc)}</td><td>${esc(i.unit)}</td><td class="num">${eq?`<input id="pq-${k}" type="number" min="0" value="${i.qty}" data-act="p-qty" data-id="${p.id}" data-k="${k}" style="width:84px" aria-label="Cantidad de ${esc(i.desc)}">`:i.qty}</td>${recv?`<td class="num" ${r!==+i.qty?'style="color:var(--r);font-weight:700"':""}>${r}</td>`:""}</tr>`}).join("")}</tbody></table></div>
+   ${eq?'<div class="muted" style="font-size:12px;margin-top:-6px">Puedes ajustar las cantidades: cada cambio queda en la trazabilidad en rojo.</div>':""}
+   ${(p.deliveries||[]).length?`<div><div class="eyebrow" style="margin-bottom:6px">Entregas recibidas · ${p.deliveries.length}</div>${p.deliveries.map((d,n)=>`<div class="task" style="grid-template-columns:1fr auto"><div><div class="tt">${n+1}. ${fmtD(d.date)} · factura ${esc(d.inv)}</div><div class="muted" style="font-size:12px">${esc(p.items.map((i,k)=>d.qty[k]?`${d.qty[k]} ${i.unit} ${i.desc}`:"").filter(Boolean).join(", "))} · ${esc(userById(d.by).name)}</div></div><span class="num">${d.value?cop(d.value):"—"}</span></div>`).join("")}</div>`:""}
    <div class="grid2" style="font-size:14px">${f("Valor compra",p.value?cop(p.value):"")}${f("Orden de compra",esc(p.po))}${f("Fecha de compra",p.buyDate&&fmtD(p.buyDate))}${f("Fecha estimada de llegada",p.eta&&fmtD(p.eta))}${f("Factura de compra",esc(p.invBuy))}${f("Fecha de llegada",p.arrived&&fmtD(p.arrived))}${p.invValue!=null&&p.invValue!==p.value?f("Valor facturado",`<span style="color:var(--r);font-weight:700">${cop(p.invValue)}</span>`):""}</div>
    <div class="lock" style="background:var(--surface-2);font-size:13px">${p.accepted?"✓ Quien la solicitó aceptó la responsabilidad de esta compra al crearla.":"Sin aceptación de responsabilidad."}</div>
    <div><div class="eyebrow" style="margin-bottom:6px">Trazabilidad</div>
-    ${p.history.slice().reverse().map(h=>`<div style="font-size:13px;${h.red?"color:var(--r);font-weight:600":""}"><span class="muted" style="${h.red?"color:var(--r)":""}">${h.ts?fmtTS(h.ts):fmtD(h.at)} · ${esc(userById(h.by).name)}</span> · ${esc(h.text)}</div>`).join("")}
+    ${p.history.slice().reverse().map(h=>`<div style="font-size:13px;${h.red?"color:var(--r);font-weight:700":""}"><span class="muted" style="${h.red?"color:var(--r)":""}">${h.ts?fmtTS(h.ts):fmtD(h.at)} · ${esc(userById(h.by).name)}</span> · ${esc(h.text)}</div>`).join("")}
     <div class="row" style="margin-top:8px"><input id="p-nov" placeholder="Registrar una novedad o comentario…" style="flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface)"><button class="btn sm" data-act="p-nov" data-id="${p.id}">Registrar</button></div></div>
    <div class="row" style="justify-content:flex-end">${canEditP(p)?`<button class="btn" data-act="pr-edit" data-id="${p.id}">Editar</button>`:""}${isTop(S.user)?`<button class="btn" data-act="p-del" data-id="${p.id}" style="color:var(--r)">Eliminar</button>`:""}</div>`);
 }
@@ -1983,6 +2000,8 @@ function movePurch(p,s){
   if(!p||p.status===s)return false;
   const stop=(t,focus)=>{toast(t);if(focus){openPurch(p.id);document.getElementById(focus)?.focus()}return false};
   if(s==="Rechazada"){if((p.status==="Por confirmar"&&canConfirm())||(p.status==="Cotizado por autorizar"&&canAuthorize(p))){askReject(p);return false}return stop("Solo quien confirma o autoriza puede rechazar la solicitud en este estado")}
+  // arrivals: from Solicitado or Entrega parcial, dropping on Entrega parcial or Completado opens the arrival form
+  if((s==="Entrega parcial"||s==="Completado")&&P_WAIT.includes(p.status)){if(!canBuy())return stop("La recibe el equipo de Compras");openReceive(p);return false}
   if(P_NEXT[p.status]!==s)return stop(P_NEXT[p.status]?`Desde ${p.status} solo puede pasar a ${P_NEXT[p.status]}`:`La solicitud ya está ${p.status.toLowerCase()}`);
   if(s==="Pendiente"&&!canConfirm())return stop("La confirma el Administrador Comercial o Gerencia");
   if(s==="Cotizado por autorizar"){if(!canBuy())return stop("La cotiza el equipo de Compras");if(!p.branch)return stop("Elige la sucursal de la compra","p-branch");if(!(+p.value>0))return stop("Escribe el valor de la compra","p-val")}
@@ -1998,6 +2017,7 @@ function setPStatus(p,s,note,red){const from=p.status;p.status=s;p.moved=TODAY_I
   if(s==="Cotizado por autorizar"){const a=authorizers(p);pTask(p,`Autorizar compra #${p.num} · ${p.client} · ${cop(p.value)}`,a,"cmp",D["Cotizado por autorizar"]);pNotify(`Autorizar compra #${p.num} · ${p.client} · ${cop(p.value)}`,a)}
   if(s==="Autorizado"){pTask(p,`Generar orden de compra #${p.num} · ${p.client}`,buyers(),"cmp",D.Autorizado);pNotify(`Compra #${p.num} autorizada: generar la OC · ${p.client}`,buyers())}
   if(s==="Solicitado")pTask(p,`Recibir compra #${p.num} · ${p.client}`,buyers(),"cmp",daysBetween(TODAY_ISO,p.eta));
+  if(s==="Entrega parcial"){pTask(p,`Recibir lo que falta de la compra #${p.num} · ${p.client}`,buyers(),"cmp",daysBetween(TODAY_ISO,p.eta));pNotify(`Compra #${p.num} con entrega parcial · ${p.client}`,[userById(p.seller)].filter(u=>u.email))}
   if(P_DONE.includes(s))pNotify(`Solicitud de compra #${p.num} ${s.toLowerCase()} · ${p.client}`,[userById(p.seller)].filter(u=>u.email));
 }
 function askReject(p){
@@ -2005,22 +2025,35 @@ function askReject(p){
    <form id="f" data-k="p-reject" data-id="${p.id}" style="display:grid;gap:12px"><div class="field"><label for="rj-text">¿Por qué no se confirma o no se autoriza? *</label><textarea id="rj-text" rows="3" required placeholder="Queda en la trazabilidad y lo ve quien la solicitó"></textarea></div>
    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="close">Cancelar</button><button class="btn primary" type="submit">Rechazar</button></div></form>`);
 }
-/* arrival: check products, quantities and value against the purchase order; differences stay in red */
-function openReceive(p){
-  sheet(`<div class="sheet-h"><div><div class="eyebrow">Registrar llegada · solicitud #${p.num} · OC ${esc(p.po)}</div><h2>${esc(p.client)}</h2><div class="muted" style="font-size:13px">Revisa que llegó todo, en las cantidades y el valor de la orden de compra. Si algo cambió, escribe lo que llegó: queda como novedad en rojo.</div></div><button class="icon-btn" data-act="close" aria-label="Cerrar">✕</button></div>
+/* arrivals: each delivery has its own invoice, date and quantities; until everything ordered arrives the request stays in "Entrega parcial" */
+function openReceive(p){const prev=p.recv||p.items.map(()=>0),first=!(p.deliveries||[]).length,paid=(p.deliveries||[]).reduce((a,d)=>a+(+d.value||0),0);
+  sheet(`<div class="sheet-h"><div><div class="eyebrow">Registrar llegada${first?"":" de lo que falta"} · solicitud #${p.num} · OC ${esc(p.po)}</div><h2>${esc(p.client)}</h2><div class="muted" style="font-size:13px">Escribe lo que llegó en esta entrega. Si llega menos de lo pedido, la compra queda en <strong>Entrega parcial</strong> hasta que llegue el resto.</div></div><button class="icon-btn" data-act="close" aria-label="Cerrar">✕</button></div>
    <form id="f" data-k="p-recv" data-id="${p.id}" style="display:grid;gap:12px">
-    <div class="grid2"><div class="field"><label for="rc-inv">Factura de compra *</label><input id="rc-inv" value="${esc(p.invBuy)}" required></div><div class="field"><label for="rc-date">Fecha de llegada *</label><input id="rc-date" type="date" value="${TODAY_ISO}" required></div>
-     <div class="field"><label for="rc-val">Valor facturado (COP)</label><input id="rc-val" type="number" min="0" step="1000" value="${p.value||""}"></div></div>
-    <div class="scroll-x"><table class="count-t"><thead><tr><th>Producto</th><th>Pedido</th><th>Llegó</th></tr></thead><tbody>${p.items.map((i,k)=>`<tr><td>${esc(i.code?i.code+" · ":"")}${esc(i.desc)}</td><td class="num">${i.qty} ${esc(i.unit)}</td><td><input id="rc-q${k}" type="number" min="0" value="${i.qty}" style="width:90px"></td></tr>`).join("")}</tbody></table></div>
-    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="close">Cancelar</button><button class="btn primary" type="submit">Completar</button></div></form>`);
+    <div class="grid2"><div class="field"><label for="rc-inv">Factura de compra de esta entrega *</label><input id="rc-inv" required></div><div class="field"><label for="rc-date">Fecha de llegada *</label><input id="rc-date" type="date" value="${TODAY_ISO}" required></div>
+     <div class="field"><label for="rc-val">Valor facturado en esta entrega (COP)</label><input id="rc-val" type="number" min="0" step="1000" value="${Math.max(0,(+p.value||0)-paid)||""}"></div></div>
+    <div class="scroll-x"><table class="count-t"><thead><tr><th>Producto</th><th>Pedido</th>${first?"":"<th>Ya llegó</th>"}<th>Llega ahora</th></tr></thead><tbody>${p.items.map((i,k)=>`<tr><td>${esc(i.code?i.code+" · ":"")}${esc(i.desc)}</td><td class="num">${i.qty} ${esc(i.unit)}</td>${first?"":`<td class="num">${+prev[k]||0}</td>`}<td><input id="rc-q${k}" type="number" min="0" value="${Math.max(0,(+i.qty||0)-(+prev[k]||0))}" style="width:90px" aria-label="Llega ahora de ${esc(i.desc)}"></td></tr>`).join("")}</tbody></table></div>
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="close">Cancelar</button><button class="btn primary" type="submit">Registrar llegada</button></div></form>`);
 }
 function receivePurch(f){const p=PURCH.find(x=>x.id===f.dataset.id),g=id=>document.getElementById(id).value.trim();
-  if(!g("rc-inv"))return toast("Escribe la factura de compra");if(!g("rc-date"))return toast("Escribe la fecha de llegada");
-  p.recv=p.items.map((i,k)=>{const v=g("rc-q"+k);return v===""?i.qty:Math.max(0,+v)});p.invBuy=g("rc-inv");p.arrived=g("rc-date");p.invValue=g("rc-val")===""?p.value:+g("rc-val");
-  let nov=0;p.items.forEach((i,k)=>{if(p.recv[k]!==i.qty){pLog(p,`Novedad en la llegada: ${i.desc} · llegaron ${p.recv[k]} de ${i.qty} ${i.unit}`,true);nov++}});
-  if(p.invValue!==p.value){pLog(p,`Novedad en la llegada: valor facturado ${cop(p.invValue)} frente a ${cop(p.value)} de la orden de compra`,true);nov++}
-  setPStatus(p,"Completado",`Factura ${p.invBuy} · llegó el ${fmtS(p.arrived)}${onTime(p)?" (a tiempo)":" (después de la fecha en que se necesitaba)"}`);
-  closeSheet();renderApp();toast(`Solicitud #${p.num} completada${nov?` · ${nov} novedad(es) en rojo`:" · llegó completa"}`);
+  const inv=g("rc-inv"),date=g("rc-date");if(!inv)return toast("Escribe la factura de compra de esta entrega");if(!date)return toast("Escribe la fecha de llegada");
+  const prev=p.recv||p.items.map(()=>0),now=p.items.map((i,k)=>{const v=g("rc-q"+k);return v===""?0:Math.max(0,+v)});if(!now.some(x=>x>0))return toast("Escribe lo que llegó en esta entrega");
+  (p.deliveries=p.deliveries||[]).push({at:TODAY_ISO,date,inv,qty:now,value:g("rc-val")===""?0:Math.max(0,+g("rc-val")),by:S.user.id});
+  p.recv=p.items.map((i,k)=>(+prev[k]||0)+now[k]);p.invBuy=p.deliveries.map(d=>d.inv).join(", ");p.arrived=date;p.invValue=p.deliveries.reduce((a,d)=>a+(+d.value||0),0);
+  const got=p.items.map((i,k)=>now[k]?`${now[k]} ${i.unit} ${i.desc}`:"").filter(Boolean).join(", ");
+  p.items.forEach((i,k)=>{if(p.recv[k]>+i.qty)pLog(p,`Novedad en la llegada: ${i.desc} · llegaron ${p.recv[k]-i.qty} ${i.unit} más de lo pedido`,true)});
+  const miss=pMissing(p);
+  if(miss.length){const txt=`Entrega parcial · factura ${inv} · llegó el ${fmtS(date)}: ${got}. Falta: ${miss.map(x=>`${x.f} ${x.i.unit} ${x.i.desc}`).join(", ")}`;
+    if(p.status!=="Entrega parcial")setPStatus(p,"Entrega parcial",txt.replace(/^Entrega parcial · /,""),true);else{pLog(p,txt,true);pCloseTasks(p);pTask(p,`Recibir lo que falta de la compra #${p.num} · ${p.client}`,buyers(),"cmp",daysBetween(TODAY_ISO,p.eta))}
+    closeSheet();renderApp();toast(`Solicitud #${p.num}: con entrega parcial · faltan ${miss.length} producto(s)`);return}
+  if(p.invValue!==+p.value)pLog(p,`Novedad en la llegada: valor facturado ${cop(p.invValue)} frente a ${cop(p.value)} de la orden de compra`,true);
+  setPStatus(p,"Completado",`Llegó todo · factura ${inv} · ${fmtS(date)}${p.deliveries.length>1?` (${p.deliveries.length} entregas)`:""}${onTime(p)?" · a tiempo":" · después de la fecha en que se necesitaba"}`);
+  closeSheet();renderApp();toast(`Solicitud #${p.num} completada`);
+}
+/* the supplier will not send the rest: close the request with what arrived, with a reason */
+function askCloseout(p){const m=pMissing(p).map(x=>`${x.f} ${x.i.unit} ${x.i.desc}`).join(", ");
+  sheet(`<div class="sheet-h"><div><div class="eyebrow">Cerrar con lo recibido · solicitud #${p.num}</div><h2>${esc(p.client)}</h2><div class="muted" style="font-size:13px">No llegará: ${esc(m)}</div></div><button class="icon-btn" data-act="close" aria-label="Cerrar">✕</button></div>
+   <form id="f" data-k="p-closeout" data-id="${p.id}" style="display:grid;gap:12px"><div class="field"><label for="co-text">¿Por qué se cierra sin recibir todo? *</label><textarea id="co-text" rows="3" required placeholder="Queda como novedad en rojo en la trazabilidad"></textarea></div>
+   <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-act="close">Cancelar</button><button class="btn primary" type="submit">Cerrar como Completado</button></div></form>`);
 }
 /* Compras dashboard: period figures plus everything still open */
 function viewDashCmp(){
@@ -2040,8 +2073,11 @@ function viewDashCmp(){
   </div>`;
 }
 /* the paper form "Formato de compra manual – Solicitud de abastecimiento", as a form; also used to edit */
-function itemRows(items,n,px){const r=[...(items||[])];while(r.length<n)r.push({code:"",desc:"",unit:"UN",qty:""});
-  return r.map((i,k)=>`<tr><td><input id="${px}c${k}" value="${esc(i.code||"")}" list="mx-codes" data-mxc="${px}d${k}" style="width:100px"></td><td><input id="${px}d${k}" value="${esc(i.desc||i.name||"")}" list="mx-names" data-mxn="${px}c${k}" style="min-width:200px;width:100%"></td><td><input id="${px}u${k}" value="${esc(i.unit||"UN")}" style="width:70px"></td><td><input id="${px}q${k}" type="number" min="0" value="${i.qty??""}" style="width:80px"></td></tr>`).join("")}
+const MAX_ITEMS=15;
+function itemRows(items,n,px,start=0){const r=[...(items||[])];while(r.length<n)r.push({code:"",desc:"",unit:"UN",qty:""});
+  return r.map((i,j)=>{const k=start+j;return `<tr><td><input id="${px}c${k}" value="${esc(i.code||"")}" list="mx-codes" data-mxc="${px}d${k}" style="width:100px" aria-label="Código"></td><td><input id="${px}d${k}" value="${esc(i.desc||i.name||"")}" list="mx-names" data-mxn="${px}c${k}" style="min-width:200px;width:100%" aria-label="Descripción"></td><td><input id="${px}u${k}" value="${esc(i.unit||"UN")}" style="width:70px" aria-label="Unidad"></td><td><input id="${px}q${k}" type="number" min="0" value="${i.qty??""}" style="width:80px" aria-label="Cantidad"></td></tr>`}).join("")}
+// "+ Producto" adds one more row, up to MAX_ITEMS
+const rowAddBtn=px=>`<button type="button" class="btn sm" data-act="row-add" data-px="${px}">+ Producto</button> <span class="muted" style="font-size:12px">Hasta ${MAX_ITEMS} productos.</span>`;
 function readItems(px){const v=id=>(document.getElementById(id)?.value||"").trim();const out=[];for(let k=0;document.getElementById(px+"d"+k);k++){const d=v(px+"d"+k);if(d)out.push({code:v(px+"c"+k),desc:d,unit:v(px+"u"+k)||"UN",qty:+v(px+"q"+k)||0})}return out}
 function purchForm(p){
   return `${mxLists()}<div class="grid2"><div class="field"><label for="f-store">Cliente solicitante *</label><input id="f-store" list="pf-clients" value="${esc(p?.client||"")}" placeholder="Cliente o bodega"><datalist id="pf-clients">${CLIENTS().map(c=>`<option value="${esc(c)}">`).join("")}</datalist></div>
@@ -2050,7 +2086,8 @@ function purchForm(p){
     <div class="field"><label for="f-need">Fecha en que se necesita *</label><input id="f-need" type="date" value="${p?.needBy||""}" ${p?"":`min="${TODAY_ISO}"`}></div>
     <div class="field"><label>Tipo</label><div class="seg"><label><input type="radio" name="ptype" value="CE" ${p?.type!=="SA"?"checked":""}> Compra especial (CE)</label><label><input type="radio" name="ptype" value="SA" ${p?.type==="SA"?"checked":""}> Abastecimiento (SA)</label></div></div>
     <div class="field"><label>Fecha y hora de la solicitud</label><div class="muted" style="font-size:14px;padding:8px 0">${p?fmtTS(p.createdAt,p.date):"Se registra automáticamente al enviarla"}</div></div></div>
-   <div class="field"><label>Productos *</label><div class="scroll-x"><table class="count-t"><thead><tr><th>Código</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th></tr></thead><tbody>${itemRows(p?.items,Math.max(4,(p?.items||[]).length+1),"pi-")}</tbody></table></div>
+   <div class="field"><label>Productos *</label><div class="scroll-x"><table class="count-t"><thead><tr><th>Código</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th></tr></thead><tbody id="pi-body">${itemRows(p?.items,Math.min(MAX_ITEMS,Math.max(4,(p?.items||[]).length+1)),"pi-")}</tbody></table></div>
+    <div>${rowAddBtn("pi-")}</div>
     <span class="muted" style="font-size:12px">Al escribir aparecen sugerencias de la Matriz de productos.</span></div>
    <div class="field"><label for="f-oc">Orden de compra del cliente</label><input id="f-oc" value="${esc(p?.clientOC||"")}" placeholder="Ej.: OC 807664"></div>
    ${p?"":`<label class="row" style="gap:8px;font-size:14px;flex-wrap:nowrap"><input type="checkbox" id="f-prod" style="width:18px;height:18px;flex:none"> <span><strong>Es para producción</strong>: no va a Compras, llega al módulo Producción como orden de producción (${esc(prodStore())}).</span></label>
@@ -2076,8 +2113,8 @@ function submitPurch(f){const v=id=>(document.getElementById(id)?.value||"").tri
   closeSheet();renderApp();toast(`Solicitud #${p.num} enviada · espera la confirmación de ${c.map(u=>u.name).join(" o ")||"Gerencia"}`);
 }
 // calendar helpers for Compras: requests by the day they arrived
-const pChips=ds=>PURCH.filter(p=>p.date===ds).map(p=>`<span class="chip ${({g:"b",y:"y",b:"b",r:"r"})[pTone[p.status]]}" data-act="open-purch" data-id="${p.id}" role="button" tabindex="0" title="Solicitud #${p.num}"><span class="t">#${p.num} ${esc(p.client)}</span><span class="s">${p.status}</span></span>`).join("");
-const pDay=ds=>{const l=PURCH.filter(p=>p.date===ds);return l.length?l.map(p=>`<button class="visit" data-act="open-purch" data-id="${p.id}"><span class="bar" style="background:var(--${pTone[p.status]==="g"?"g":pTone[p.status]+"-bar"})"></span><span style="min-width:0"><h3>#${p.num} · ${esc(p.client)}</h3><span class="muted" style="font-size:13px">${esc(p.items.map(i=>i.desc).join(", "))}</span><br><span class="pill ${pTone[p.status]}" style="margin-top:4px">${p.status}</span></span><span class="score num" style="font-size:16px">${p.type}<small>${esc(userById(p.seller).name)}</small></span></button>`).join(""):'<div class="card empty">No llegaron solicitudes este día.</div>'};
+const pChips=ds=>PURCH.filter(p=>p.date===ds).map(p=>`<span class="chip ${({g:"b",y:"y",b:"b",r:"r",o:"y"})[pTone[p.status]]}" data-act="open-purch" data-id="${p.id}" role="button" tabindex="0" title="Solicitud #${p.num}"><span class="t">#${p.num} ${esc(p.client)}</span><span class="s">${p.status}</span></span>`).join("");
+const pDay=ds=>{const l=PURCH.filter(p=>p.date===ds);return l.length?l.map(p=>`<button class="visit" data-act="open-purch" data-id="${p.id}"><span class="bar" style="background:var(--${pTone[p.status]==="g"?"g":pTone[p.status]==="o"?"accent":pTone[p.status]+"-bar"})"></span><span style="min-width:0"><h3>#${p.num} · ${esc(p.client)}</h3><span class="muted" style="font-size:13px">${esc(p.items.map(i=>i.desc).join(", "))}</span><br><span class="pill ${pTone[p.status]}" style="margin-top:4px">${p.status}</span></span><span class="score num" style="font-size:16px">${p.type}<small>${esc(userById(p.seller).name)}</small></span></button>`).join(""):'<div class="card empty">No llegaron solicitudes este día.</div>'};
 
 /* ---------- Producción: órdenes de producción, tablero y programación de la semana ----------
    Llegan desde las compras especiales para Bodega Producción (de Comercial u otro módulo) o se crean en Producción.
@@ -2186,7 +2223,8 @@ function orderForm(){
   return `${mxLists()}<div class="lock" style="background:var(--surface-2)">Orden de producción <strong>#${nextNum(PORDERS)}</strong> · se crea en estado Solicitado</div>
    <div class="grid2"><div class="field"><label for="f-start">Fecha de inicio de producción *</label><input id="f-start" type="date" value="${TODAY_ISO}"></div><div class="field"><label for="f-del">Fecha de entrega *</label><input id="f-del" type="date" value="${addDays(TODAY_ISO,2)}"></div>
     <div class="field"><label for="f-store">Cliente o destino</label><input id="f-store" list="pf-clients" placeholder="Opcional"><datalist id="pf-clients">${CLIENTS().map(c=>`<option value="${esc(c)}">`).join("")}</datalist></div></div>
-   <div class="field"><label>Productos *</label><div class="scroll-x"><table class="count-t"><thead><tr><th>Código</th><th>Nombre de producto</th><th>Unidad</th><th>Cantidad a producir</th></tr></thead><tbody>${itemRows([],5,"oi-")}</tbody></table></div>
+   <div class="field"><label>Productos *</label><div class="scroll-x"><table class="count-t"><thead><tr><th>Código</th><th>Nombre de producto</th><th>Unidad</th><th>Cantidad a producir</th></tr></thead><tbody id="oi-body">${itemRows([],5,"oi-")}</tbody></table></div>
+    <div>${rowAddBtn("oi-")}</div>
     <span class="muted" style="font-size:12px">La cantidad producida se registra durante la producción.</span></div>`;
 }
 function submitOrder(){const v=id=>(document.getElementById(id)?.value||"").trim();const items=readItems("oi-");
@@ -2486,6 +2524,8 @@ document.addEventListener("click",ev=>{
    case"pr-edit":closeSheet();form("purch",{edit:el.dataset.id});break;
    case"p-del":{const p=PURCH.find(x=>x.id===el.dataset.id);if(!isTop(S.user)||!confirm(`¿Eliminar la solicitud #${p.num} de ${p.client}? No se puede deshacer.`))break;
      pCloseTasks(p);TASKS.splice(0,TASKS.length,...TASKS.filter(t=>!(p.tasks||[]).includes(t.id)));PURCH.splice(PURCH.indexOf(p),1);closeSheet();renderApp();toast(`Solicitud #${p.num} eliminada`);break}
+   case"row-add":{const px=el.dataset.px,tb=document.getElementById(px+"body");if(!tb)break;const n=tb.rows.length;if(n>=MAX_ITEMS)return toast(`Máximo ${MAX_ITEMS} productos por solicitud`);tb.insertAdjacentHTML("beforeend",itemRows([],1,px,n));document.getElementById(px+"d"+n)?.focus();break}
+   case"p-closeout":{const p=PURCH.find(x=>x.id===el.dataset.id);if(!canBuy())return toast("La cierra el equipo de Compras o Gerencia");askCloseout(p);break}
    case"p-nov":{const p=PURCH.find(x=>x.id===el.dataset.id),t=document.getElementById("p-nov").value.trim();if(!t)return toast("Escribe la novedad");pLog(p,"Novedad: "+t);openPurch(p.id);renderView();toast("Novedad registrada");break}
    case"open-order":if(DRAG_DONE){DRAG_DONE=false;break}openOrder(el.dataset.id);break;
    case"o-go":{const o=PORDERS.find(x=>x.id===el.dataset.id);if(moveOrder(o,el.dataset.s)){toast(`OP #${o.num}: ${o.status}`);openOrder(o.id);renderApp()}break}
@@ -2540,6 +2580,8 @@ document.addEventListener("change",ev=>{
    case"per-from":case"per-to":{if(!el.value)break;S.per[a==="per-from"?"from":"to"]=el.value;if(S.per.from>S.per.to){if(a==="per-from")S.per.to=S.per.from;else S.per.from=S.per.to}renderView();break}
    case"user-active":setUserActive(el.dataset.id,el.checked);break;
    case"store-pick":refreshAisle();break;
+   case"p-qty":{const p=PURCH.find(x=>x.id===el.dataset.id),k=+el.dataset.k,it=p.items[k],v=Math.max(0,Math.round(+el.value||0));if(!canQty(p)){openPurch(p.id);break}
+     if(v===+it.qty)break;const old=it.qty;it.qty=v;pLog(p,`Cambió la cantidad de ${it.desc}: ${old} → ${v} ${it.unit} (en ${p.status})`,true);openPurch(p.id);renderView();toast("Cantidad ajustada · queda en la trazabilidad");break}
    case"task-who":S.taskWho=el.value;renderView();break;
    case"rate-pick":{const i=document.getElementById(el.dataset.px+"val");if(i)i.value=RATE_VAL[el.value];break}
    case"deal-val":{const d=DEALS.find(x=>x.id===el.dataset.id),v=Math.max(0,+el.value||0);if(v===d.value)break;d.value=v;d.acts.push({id:nid("a"),type:"Nota",date:TODAY_ISO,text:`Valor estimado mensual: ${cop(v)}`,by:S.user.id});openDeal(d.id);renderView();toast("Valor actualizado");break}
@@ -2670,6 +2712,8 @@ document.addEventListener("submit",ev=>{ev.preventDefault();const f=ev.target;
     SITES.list.push({code:code||String(Math.max(0,...SITES.list.map(s=>+s.code||0))+1),name});SITES.list.sort((a,b)=>a.code.localeCompare(b.code,"es",{numeric:true}));syncStores();enforceOwner();renderApp();toast(`Bodega ${name} creada`);return}
   if(f.dataset.k==="p-reject"){const p=PURCH.find(x=>x.id===f.dataset.id),r=document.getElementById("rj-text").value.trim();if(!r)return toast("Escribe el motivo");p.rejReason=r;setPStatus(p,"Rechazada","Motivo: "+r,true);closeSheet();renderApp();toast(`Solicitud #${p.num} rechazada`);return}
   if(f.dataset.k==="p-recv")return receivePurch(f);
+  if(f.dataset.k==="p-closeout"){const p=PURCH.find(x=>x.id===f.dataset.id),r=document.getElementById("co-text").value.trim();if(!r)return toast("Escribe el motivo");
+    const m=pMissing(p).map(x=>`${x.f} ${x.i.unit} ${x.i.desc}`).join(", ");setPStatus(p,"Completado",`Cerrada con lo recibido · no llegó: ${m} · Motivo: ${r}`,true);closeSheet();renderApp();toast(`Solicitud #${p.num} cerrada con lo recibido`);return}
   if(f.dataset.k==="o-reject"){const o=PORDERS.find(x=>x.id===f.dataset.id),r=document.getElementById("rj-text").value.trim();if(!r)return toast("Escribe el motivo");o.rejReason=r;const from=o.status;o.status="Rechazado";o.moved=TODAY_ISO;o.doneAt=TODAY_ISO;oLog(o,`${from} → Rechazado · Motivo: ${r}`,true);oClose(o);
     if(o.requester&&o.origin!=="Producción")pNotify(`Orden de producción #${o.num} rechazada · ${o.client}`,[userById(o.requester)].filter(u=>u.email));closeSheet();renderApp();toast(`OP #${o.num} rechazada`);return}
   if(f.dataset.k==="p-add"){const name=document.getElementById("np-name").value.trim();if(!name)return toast("Escribe el nombre");
