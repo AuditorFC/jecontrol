@@ -1946,7 +1946,7 @@ function pStep(p){
   const box=(html,tone)=>`<div class="card" style="display:grid;gap:10px;background:var(--${tone||"surface-2"})">${html}</div>`;
   const who=t=>`<div class="muted" style="font-size:13px">${t}</div>`;
   if(p.status==="Por confirmar")return canConfirm()?box(`<strong>Esta solicitud espera tu confirmación.</strong>${who("Revisa los productos y la fecha. Puedes editarla antes de confirmar.")}
-     <div class="row"><button class="btn primary" data-act="p-go" data-id="${p.id}" data-s="Pendiente">Confirmar</button><button class="btn" data-act="p-edit" data-id="${p.id}">Editar</button><button class="btn" data-act="p-go" data-id="${p.id}" data-s="Rechazada">Rechazar</button></div>`,"y-bg")
+     <div class="row"><button class="btn primary" data-act="p-go" data-id="${p.id}" data-s="Pendiente">Confirmar</button><button class="btn" data-act="pr-edit" data-id="${p.id}">Editar</button><button class="btn" data-act="p-go" data-id="${p.id}" data-s="Rechazada">Rechazar</button></div>`,"y-bg")
     :box(who(`Espera la confirmación del Administrador Comercial o de Gerencia (${esc(confirmers().map(u=>u.name).join(", "))}).`));
   if(p.status==="Pendiente")return canBuy()?box(`<strong>Cotizar</strong><div class="field"><label for="p-branch">Sucursal *</label><select id="p-branch"><option value="">Elige la sucursal…</option>${opts(STORES,p.branch)}</select></div><div class="field"><label for="p-val">Valor compra (COP) *</label><input id="p-val" type="number" min="0" step="1000" inputmode="numeric" value="${p.value||""}" placeholder="Ej.: 3500000"></div>
      ${who(`Hasta ${cop(PARAMS.purch.authLimit)} la autoriza el Administrador de Compras; por encima${p.type==="SA"?" (y toda solicitud de abastecimiento)":""}, Gerencia.`)}
@@ -1968,7 +1968,7 @@ function openPurch(id){fixPurch();const p=PURCH.find(x=>x.id===id);if(!p)return 
      <div class="muted" style="font-size:13px">Creada el ${fmtTS(p.createdAt,p.date)} · Se necesita el <strong>${fmtD(p.needBy)}</strong></div></div><button class="icon-btn" data-act="close" aria-label="Cerrar">✕</button></div>
    <div class="row" style="gap:8px"><span class="pill ${pTone[p.status]}">${p.status}</span>${late?`<span class="flag warn">${FIRE} ${p.status==="Solicitado"?"No llegó en la fecha estimada":"Venció el tiempo de este estado"}</span>`:due?`<span class="muted" style="font-size:13px">${p.status==="Solicitado"?"Llegada estimada":"Tiempo hasta"}: ${fmtD(due)}</span>`:""}${ot!=null?`<span class="pill ${ot?"g":"r"}">${ot?"Llegó a tiempo":"Llegó tarde"}</span>`:""}</div>
    ${p.status==="Rechazada"?`<div class="lock" style="background:var(--r-bg)"><strong>Rechazada</strong> · ${esc(p.rejReason||"")}</div>`:""}
-   ${!p.needBy&&!P_DONE.includes(p.status)?`<div class="lock" style="background:var(--y-bg);font-size:13px">Esta solicitud no tiene la fecha en que se necesita.${canEditP(p)?` <button class="btn sm" data-act="p-edit" data-id="${p.id}">Agregar la fecha</button>`:""}</div>`:""}
+   ${!p.needBy&&!P_DONE.includes(p.status)?`<div class="lock" style="background:var(--y-bg);font-size:13px">Esta solicitud no tiene la fecha en que se necesita.${canEditP(p)?` <button class="btn sm" data-act="pr-edit" data-id="${p.id}">Agregar la fecha</button>`:""}</div>`:""}
    ${pStep(p)}
    <div class="scroll-x"><table><thead><tr><th>Código</th><th>Descripción</th><th>Unidad</th><th>Cantidad</th>${recv?"<th>Llegó</th>":""}</tr></thead><tbody>${p.items.map((i,k)=>{const r=recv?p.recv[k]:null;return `<tr><td>${esc(i.code||"—")}</td><td>${esc(i.desc)}</td><td>${esc(i.unit)}</td><td class="num">${i.qty}</td>${recv?`<td class="num" ${r!==i.qty?'style="color:var(--r);font-weight:700"':""}>${r}</td>`:""}</tr>`}).join("")}</tbody></table></div>
    <div class="grid2" style="font-size:14px">${f("Valor compra",p.value?cop(p.value):"")}${f("Orden de compra",esc(p.po))}${f("Fecha de compra",p.buyDate&&fmtD(p.buyDate))}${f("Fecha estimada de llegada",p.eta&&fmtD(p.eta))}${f("Factura de compra",esc(p.invBuy))}${f("Fecha de llegada",p.arrived&&fmtD(p.arrived))}${p.invValue!=null&&p.invValue!==p.value?f("Valor facturado",`<span style="color:var(--r);font-weight:700">${cop(p.invValue)}</span>`):""}</div>
@@ -1976,7 +1976,7 @@ function openPurch(id){fixPurch();const p=PURCH.find(x=>x.id===id);if(!p)return 
    <div><div class="eyebrow" style="margin-bottom:6px">Trazabilidad</div>
     ${p.history.slice().reverse().map(h=>`<div style="font-size:13px;${h.red?"color:var(--r);font-weight:600":""}"><span class="muted" style="${h.red?"color:var(--r)":""}">${h.ts?fmtTS(h.ts):fmtD(h.at)} · ${esc(userById(h.by).name)}</span> · ${esc(h.text)}</div>`).join("")}
     <div class="row" style="margin-top:8px"><input id="p-nov" placeholder="Registrar una novedad o comentario…" style="flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface)"><button class="btn sm" data-act="p-nov" data-id="${p.id}">Registrar</button></div></div>
-   <div class="row" style="justify-content:flex-end">${canEditP(p)?`<button class="btn" data-act="p-edit" data-id="${p.id}">Editar</button>`:""}${isTop(S.user)?`<button class="btn" data-act="p-del" data-id="${p.id}" style="color:var(--r)">Eliminar</button>`:""}</div>`);
+   <div class="row" style="justify-content:flex-end">${canEditP(p)?`<button class="btn" data-act="pr-edit" data-id="${p.id}">Editar</button>`:""}${isTop(S.user)?`<button class="btn" data-act="p-del" data-id="${p.id}" style="color:var(--r)">Eliminar</button>`:""}</div>`);
 }
 /* moving a request, from the board or from its sheet: one step at a time, each with its owner and required fields */
 function movePurch(p,s){
@@ -2483,7 +2483,7 @@ document.addEventListener("click",ev=>{
      if(g("p-branch")&&g("p-branch").value!==p.branch){if(p.branch||g("p-branch").value)pLog(p,`Sucursal: ${p.branch||"por definir"} → ${g("p-branch").value||"por definir"}`);p.branch=g("p-branch").value}
      if(g("p-val"))p.value=Math.max(0,+g("p-val").value||0);if(g("p-po"))p.po=g("p-po").value.trim();if(g("p-bd"))p.buyDate=g("p-bd").value;if(g("p-eta"))p.eta=g("p-eta").value;
      if(movePurch(p,el.dataset.s)){toast(`Solicitud #${p.num}: ${p.status}`);openPurch(p.id);renderApp()}break}
-   case"p-edit":closeSheet();form("purch",{edit:el.dataset.id});break;
+   case"pr-edit":closeSheet();form("purch",{edit:el.dataset.id});break;
    case"p-del":{const p=PURCH.find(x=>x.id===el.dataset.id);if(!isTop(S.user)||!confirm(`¿Eliminar la solicitud #${p.num} de ${p.client}? No se puede deshacer.`))break;
      pCloseTasks(p);TASKS.splice(0,TASKS.length,...TASKS.filter(t=>!(p.tasks||[]).includes(t.id)));PURCH.splice(PURCH.indexOf(p),1);closeSheet();renderApp();toast(`Solicitud #${p.num} eliminada`);break}
    case"p-nov":{const p=PURCH.find(x=>x.id===el.dataset.id),t=document.getElementById("p-nov").value.trim();if(!t)return toast("Escribe la novedad");pLog(p,"Novedad: "+t);openPurch(p.id);renderView();toast("Novedad registrada");break}
@@ -2764,7 +2764,7 @@ const toMap=a=>new Map(a.map(x=>[x.id,JSON.stringify(x)]));
 const cfgSnap=()=>Object.fromEntries(Object.keys(OBJECTS).map(k=>[k,JSON.stringify(OBJECTS[k])]));
 function applyRemote(n,data){
   // settings keep their default values for anything added in a newer version of the app
-  if(n==="config"){Object.entries(data||{}).forEach(([k,x])=>{const t=OBJECTS[k];if(t&&x){const def=DEFAULTS[k]||{};Object.keys(t).forEach(z=>delete t[z]);Object.assign(t,JSON.parse(JSON.stringify(def)),x);
+  if(n==="config"){Object.entries(data||{}).forEach(([k,x])=>{const t=OBJECTS[k];if(t&&x){x=JSON.parse(JSON.stringify(x));const def=DEFAULTS[k]||{};Object.keys(t).forEach(z=>delete t[z]);Object.assign(t,JSON.parse(JSON.stringify(def)),x);
       Object.keys(def).forEach(z=>{if(def[z]&&typeof def[z]==="object"&&!Array.isArray(def[z])&&t[z]&&typeof t[z]==="object")t[z]={...def[z],...t[z]}})}});syncStores();BASE.config=cfgSnap()}
   else{ARRAYS[n].splice(0,ARRAYS[n].length,...(data||[]));BASE[n]=toMap(ARRAYS[n])}
 }
@@ -2773,7 +2773,7 @@ async function syncCol(n){
   for(let i=0;i<4;i++){
     let merged;const remote=await readCol(n);
     if(n==="config"){const base=BASE.config||{},changed=Object.keys(OBJECTS).filter(k=>JSON.stringify(OBJECTS[k])!==base[k]);if(!changed.length)return false;
-      merged={...(remote?.data||{})};changed.forEach(k=>merged[k]=OBJECTS[k])}
+      merged={...(remote?.data||{})};changed.forEach(k=>merged[k]=JSON.parse(JSON.stringify(OBJECTS[k])))}
     else{const base=BASE[n]||new Map(),cur=toMap(ARRAYS[n]),up=new Set([...cur.keys()].filter(k=>base.get(k)!==cur.get(k))),del=[...base.keys()].filter(k=>!cur.has(k));
       if(!up.size&&!del.length)return false;
       const rm=new Map((remote?.data||[]).map(x=>[x.id,x]));del.forEach(k=>rm.delete(k));
@@ -2937,6 +2937,7 @@ async function startApp(){
   if(me.active===false)return gate(`<div class="eyebrow">Hola, ${esc(ME.name.split(" ")[0])}</div><h2 style="font-size:20px;margin:0">Tu usuario está inactivo</h2><p class="muted" style="margin:0">Pide a Gerencia que lo active de nuevo.</p><button class="btn" data-act="m365-out">Cerrar sesión</button>`);
   if(isOwner(me))me.name=ME.name;
   S.user=me;S.mod=me.mods[0]||"log";READY=true;me.lastLogin=new Date().toISOString();
+  if(!SITES.prod||!STORES.includes(SITES.prod))SITES.prod=STORES.includes("CUBIERTOS")?"CUBIERTOS":STORES[0];if(!SITES.seeded&&PRODS.length)SITES.seeded=true;
   if(isOwner(me)&&!SITES.seeded){gate('<p class="muted" style="text-align:center">Preparando la versión 3: bodegas, productos, personal y usuarios…</p>');await runSeedV3();await saveNow()}
   document.getElementById("app").hidden=true;document.getElementById("login").hidden=false;renderLogin(2);
   setInterval(pullOthers,45000);
