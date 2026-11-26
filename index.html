@@ -242,7 +242,10 @@ td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
 .fstep .v{font-family:var(--f-display);font-weight:800;font-size:20px;overflow-wrap:anywhere}
 .fbar{height:6px;border-radius:0 3px 3px 0;background:var(--accent)}
 .kanban{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(150px,1fr);gap:12px;overflow-x:auto;padding-bottom:6px}
-.col{background:var(--surface-2);border-radius:12px;padding:10px;display:grid;gap:8px;align-content:start;min-height:200px}
+.col{background:var(--surface-2);border-radius:12px;padding:10px;display:grid;grid-template-columns:minmax(0,1fr);gap:8px;align-content:start;min-height:200px;min-width:0}
+.col>*{min-width:0}
+.deal,.deal *{overflow-wrap:anywhere;word-break:normal}
+.kanban.pboard{grid-auto-columns:minmax(200px,1fr)}
 .col-h{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 8px;font-weight:700;font-size:13px;padding:2px 4px}
 .deal{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:4px;text-align:left;width:100%;cursor:grab;user-select:none;-webkit-user-select:none}
 .deal.dragging{opacity:.35}
@@ -2073,7 +2076,7 @@ function viewDashCmp(){
   </div>`;
 }
 /* the paper form "Formato de compra manual – Solicitud de abastecimiento", as a form; also used to edit */
-const MAX_ITEMS=15;
+const MAX_ITEMS=25;
 function itemRows(items,n,px,start=0){const r=[...(items||[])];while(r.length<n)r.push({code:"",desc:"",unit:"UN",qty:""});
   return r.map((i,j)=>{const k=start+j;return `<tr><td><input id="${px}c${k}" value="${esc(i.code||"")}" list="mx-codes" data-mxc="${px}d${k}" style="width:100px" aria-label="Código"></td><td><input id="${px}d${k}" value="${esc(i.desc||i.name||"")}" list="mx-names" data-mxn="${px}c${k}" style="min-width:200px;width:100%" aria-label="Descripción"></td><td><input id="${px}u${k}" value="${esc(i.unit||"UN")}" style="width:70px" aria-label="Unidad"></td><td><input id="${px}q${k}" type="number" min="0" value="${i.qty??""}" style="width:80px" aria-label="Cantidad"></td></tr>`}).join("")}
 // "+ Producto" adds one more row, up to MAX_ITEMS
@@ -2783,8 +2786,18 @@ const BASE={},ETAG={};
 
 async function m365Token(){
   try{return(await MSAL.acquireTokenSilent({scopes:M365.scopes,account:ACCOUNT})).accessToken}
-  catch(e){await MSAL.acquireTokenRedirect({scopes:M365.scopes,account:ACCOUNT});throw e}
+  catch(e){if(reLogin())return new Promise(()=>{});throw e}
 }
+// Safari (pinned tabs, cleared site data) can lose the Microsoft session; go back to sign-in once instead of showing an error.
+const REAUTH_K="jec-reauth";
+function reLogin(){let t=0;try{t=+sessionStorage.getItem(REAUTH_K)||0}catch(_){}
+  if(Date.now()-t<90000)return false;
+  try{sessionStorage.setItem(REAUTH_K,String(Date.now()))}catch(_){}
+  gate('<p class="muted" style="text-align:center">Tu sesión de Microsoft se cerró. Abriendo el inicio de sesión…</p>');
+  MSAL.acquireTokenRedirect({scopes:M365.scopes,loginHint:ACCOUNT?.username}).catch(()=>sessionExpired());
+  return true}
+function sessionExpired(){gate(`<div class="lock">Tu sesión de Microsoft se cerró. Vuelve a entrar con tu cuenta de la empresa.</div><button class="btn primary" data-act="ms-login">Entrar con Microsoft</button><button class="btn" data-act="m365-out">Cerrar sesión y usar otra cuenta</button>`)}
+const isAuthErr=e=>e instanceof msal.InteractionRequiredAuthError||e instanceof msal.BrowserAuthError||/interaction_required|login_required|no_tokens_found|AADSTS\d+/i.test(String(e?.errorCode||"")+" "+String(e?.message||""));
 async function graph(path,opt={}){
   const t=await m365Token();const json=typeof opt.body==="string";
   const r=await fetch(path.startsWith("http")?path:"https://graph.microsoft.com/v1.0"+path,{...opt,headers:{Authorization:"Bearer "+t,...(json?{"Content-Type":"application/json"}:{}),...(opt.headers||{})}});
@@ -2989,8 +3002,10 @@ async function startApp(){
 async function m365Start(){
   MSAL=new msal.PublicClientApplication({auth:{clientId:M365.clientId,authority:`https://login.microsoftonline.com/${M365.tenantId}`,redirectUri:location.origin+location.pathname},cache:{cacheLocation:"localStorage"}});
   await MSAL.initialize();
-  const res=await MSAL.handleRedirectPromise().catch(e=>{toast("Error al iniciar sesión: "+e.message);return null});
+  let redirErr=null;
+  const res=await MSAL.handleRedirectPromise().catch(e=>{redirErr=e;return null});
   ACCOUNT=res?.account||MSAL.getAllAccounts()[0]||null;
+  if(redirErr&&!ACCOUNT)return sessionExpired();
   if(!ACCOUNT)return;
   gate('<p class="muted" style="text-align:center">Conectando con Microsoft 365…</p>');
   try{
@@ -2999,10 +3014,11 @@ async function m365Start(){
     if(st==="missing")return ME.email===OWNER_EMAIL?setupScreen():gate('<p class="muted">JE - CONTROL todavía no está instalado. Pide a Gerencia que lo active.</p>');
     if(st==="denied")return noAccessScreen();
     await startApp();
-  }catch(e){gate(`<div class="lock" style="background:var(--r-bg)">No se pudo conectar con Microsoft 365: ${esc(e.message)}</div><button class="btn" data-act="m365-out">Cerrar sesión y volver a intentar</button>`)}
+    try{sessionStorage.removeItem(REAUTH_K)}catch(_){}
+  }catch(e){if(isAuthErr(e))return sessionExpired();gate(`<div class="lock" style="background:var(--r-bg)">No se pudo conectar con Microsoft 365: ${esc(e.message)}</div><button class="btn" data-act="m365-out">Cerrar sesión y volver a intentar</button>`)}
 }
 document.addEventListener("click",ev=>{const el=ev.target.closest("[data-act]");if(!el)return;const a=el.dataset.act;
-  const own={"ms-login":()=>MSAL.loginRedirect({scopes:M365.scopes,prompt:"select_account"}),"m365-out":()=>MSAL.logoutRedirect({account:ACCOUNT}),
+  const own={"ms-login":()=>MSAL.loginRedirect({scopes:M365.scopes,...(ACCOUNT?{loginHint:ACCOUNT.username}:{prompt:"select_account"})}),"m365-out":()=>MSAL.logoutRedirect({account:ACCOUNT}),
     "setup-run":setupRun,"req-access":()=>requestAccess(el),"user-remove":()=>removeUser(el.dataset.id)}[a];
   if(own&&MSAL){ev.stopImmediatePropagation();own()}
 },true);
